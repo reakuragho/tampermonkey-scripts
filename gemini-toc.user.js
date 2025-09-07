@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini TOC (Table of Contents)
 // @namespace    http://tampermonkey.net/
-// @version      1.0
+// @version      1.1
 // @description  Add a floating TOC for Gemini conversations
 // @author       You
 // @match        https://gemini.google.com/*
@@ -17,7 +17,7 @@
     toc.id = "gemini-toc";
     toc.style.cssText = `
             position: fixed;
-            top: 20px;
+            top: 200px;
             right: 20px;
             width: 250px;
             max-height: 70vh;
@@ -76,95 +76,133 @@
       "p.query-text-line.ng-star-inserted"
     );
 
-    // 如果没找到，尝试其他可能的选择器
-    if (queryTextElements.length === 0) {
-      queryTextElements = document.querySelectorAll(
-        "p.query-text-line.ng-star-inserted"
-      );
-    }
-
-    if (queryTextElements.length === 0) {
-      queryTextElements = document.querySelectorAll('p[class*="query-text"]');
-    }
+    // if (queryTextElements.length === 0) {
+    //   queryTextElements = document.querySelectorAll('p[class*="query-text"]');
+    // }
 
     if (queryTextElements.length > 0) {
+      const processedElements = new Set();
+      
       queryTextElements.forEach((element) => {
+        // 如果这个元素已经被处理过，跳过
+        if (processedElements.has(element)) {
+          return;
+        }
+        
         const text = element.textContent.trim();
         if (text && text.length > 0) {
+          // 查找连续的兄弟节点并合并文本
+          const mergedText = [];
+          const elementsGroup = [element];
+          let currentElement = element;
+          
+          // 添加当前元素的文本
+          mergedText.push(text);
+          processedElements.add(element);
+          
+          // 向后查找连续的兄弟节点
+          let nextSibling = currentElement.nextElementSibling;
+          while (nextSibling && 
+                 nextSibling.matches('p.query-text-line.ng-star-inserted')) {
+            const siblingText = nextSibling.textContent.trim();
+            if (siblingText && siblingText.length > 0) {
+              mergedText.push(siblingText);
+              elementsGroup.push(nextSibling);
+              processedElements.add(nextSibling);
+            }
+            nextSibling = nextSibling.nextElementSibling;
+          }
+          
+          // 向前查找连续的兄弟节点（以防顺序不同）
+          let prevSibling = currentElement.previousElementSibling;
+          while (prevSibling && 
+                 prevSibling.matches('p.query-text-line.ng-star-inserted') &&
+                 !processedElements.has(prevSibling)) {
+            const siblingText = prevSibling.textContent.trim();
+            if (siblingText && siblingText.length > 0) {
+              mergedText.unshift(siblingText);
+              elementsGroup.unshift(prevSibling);
+              processedElements.add(prevSibling);
+            }
+            prevSibling = prevSibling.previousElementSibling;
+          }
+          
+          // 将合并的文本和第一个元素添加到prompts中
           prompts.push({
-            element: element,
-            text: text,
+            element: elementsGroup[0], // 使用第一个元素作为跳转目标
+            text: mergedText.join(' '), // 用空格连接所有文本
+            elementsGroup: elementsGroup // 保存所有相关元素，以备将来使用
           });
         }
       });
       return prompts;
     }
 
-    // 尝试多种选择器来找到用户输入
-    const selectors = [
-      '[data-message-author-role="user"]',
-      ".user-message",
-      '[role="user"]',
-      ".message.user",
-      'div[data-test-id*="user"]',
-      'div[data-test-id*="prompt"]',
-      ".prompt-content",
-      ".user-input",
-      '[class*="user"][class*="message"]',
-    ];
+    // // 尝试多种选择器来找到用户输入
+    // const selectors = [
+    //   '[data-message-author-role="user"]',
+    //   ".user-message",
+    //   '[role="user"]',
+    //   ".message.user",
+    //   'div[data-test-id*="user"]',
+    //   'div[data-test-id*="prompt"]',
+    //   ".prompt-content",
+    //   ".user-input",
+    //   '[class*="user"][class*="message"]',
+    // ];
 
-    for (const selector of selectors) {
-      const elements = document.querySelectorAll(selector);
-      if (elements.length > 0) {
-        elements.forEach((element) => {
-          const text = element.textContent.trim();
-          if (text && text.length > 0) {
-            prompts.push({
-              element: element,
-              text: text,
-            });
-          }
-        });
-        break;
-      }
-    }
+    // for (const selector of selectors) {
+    //   const elements = document.querySelectorAll(selector);
+    //   if (elements.length > 0) {
+    //     elements.forEach((element) => {
+    //       const text = element.textContent.trim();
+    //       if (text && text.length > 0) {
+    //         prompts.push({
+    //           element: element,
+    //           text: text,
+    //         });
+    //       }
+    //     });
+    //     break;
+    //   }
+    // }
 
-    // 如果上述选择器都没找到，尝试通过文本内容和位置来识别
-    if (prompts.length === 0) {
-      // 尝试查找所有可能包含用户输入的元素
-      const allElements = document.querySelectorAll("p, div, span");
+    // // 如果上述选择器都没找到，尝试通过文本内容和位置来识别
+    // if (prompts.length === 0) {
+    //   // 尝试查找所有可能包含用户输入的元素
+    //   const allElements = document.querySelectorAll("p, div, span");
 
-      allElements.forEach((element) => {
-        const text = element.textContent.trim();
-        // 简单启发式：查找可能是用户输入的元素
-        if (
-          text &&
-          text.length > 10 &&
-          text.length < 1000 &&
-          !text.includes("Gemini") &&
-          !text.includes("Google") &&
-          !text.includes("AI") &&
-          element.children.length === 0
-        ) {
-          // 检查是否在对话容器中或者有相关的类名
-          const parent = element.closest(
-            '[role="main"], .conversation, .chat, main'
-          );
-          const hasUserClass =
-            element.className &&
-            (element.className.includes("user") ||
-              element.className.includes("prompt") ||
-              element.className.includes("query"));
+    //   allElements.forEach((element) => {
+    //     const text = element.textContent.trim();
+    //     // 简单启发式：查找可能是用户输入的元素
+    //     if (
+    //       text &&
+    //       text.length > 10 &&
+    //       text.length < 1000 &&
+    //       !text.includes("Gemini") &&
+    //       !text.includes("Google") &&
+    //       !text.includes("AI") &&
+    //       element.children.length === 0
+    //     ) {
+    //       // 检查是否在对话容器中或者有相关的类名
+    //       const parent = element.closest(
+    //         '[role="main"], .conversation, .chat, main'
+    //       );
+    //       const hasUserClass =
+    //         element.className &&
+    //         (element.className.includes("user") ||
+    //           element.className.includes("prompt") ||
+    //           element.className.includes("query"));
 
-          if (parent || hasUserClass) {
-            prompts.push({
-              element: element,
-              text: text,
-            });
-          }
-        }
-      });
-    }
+    //       if (parent || hasUserClass) {
+    //         prompts.push({
+    //           element: element,
+    //           text: text,
+    //         });
+    //       }
+    //     }
+    //   });
+    // }
 
     return prompts;
   }
@@ -258,7 +296,7 @@
     // 初始更新
     setTimeout(() => {
       updateTOC(tocContainer);
-    }, 1000);
+    }, 500);
 
     // 监听DOM变化以自动更新TOC
     const observer = new MutationObserver(() => {
